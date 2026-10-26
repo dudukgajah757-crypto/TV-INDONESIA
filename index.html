@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
 <title>TV Indonesia</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <style>
@@ -56,8 +57,10 @@ video{width:100%;height:100%;background:#000;object-fit:contain;display:block}
 <div id="list"></div>
 
 <script>
-// Isi BASE dengan alamat proxy milikmu untuk iNews, RCTI, MNCTV, GTV
 var BASE = "https://telvexa.mafiateknik.com";
+// Isi dengan alamat Cloudflare Worker milikmu (tanpa garis miring di akhir), contoh: "https://tv.namamu.workers.dev"
+var PROXY = "";
+var PUB = ["https://corsproxy.io/?url=","https://api.allorigins.win/raw?url="];
 var DENS = { Referer: "https://www.dens.tv/", Origin: "https://www.dens.tv" };
 var CH = [
  {name:"TVRI Nasional",emoji:"📺",url:"https://ott-balancer.tvri.go.id/live/eds/Nasional/hls/Nasional.m3u8",fallback:"https://op-flashcon-digdayahd-1.dens.tv/h/h17/index.m3u8"},
@@ -98,7 +101,7 @@ try{ var saved=JSON.parse(localStorage.getItem("tv_custom")||"[]"); CH=CH.concat
 
 var $=function(i){return document.getElementById(i)};
 var v=$("v"), wrap=$("wrap"), hud=$("hud"), msg=$("msg"), mt=$("mt"), list=$("list");
-var hls=null, cur=-1, tok=0, hudT;
+var hls=null, cur=-1, tok=0, hudT, wd, played=false;
 
 function render(){
   list.innerHTML="";
@@ -118,49 +121,68 @@ function showMsg(t,retry){
   if(retry)$("rt").onclick=function(){play(cur)};
 }
 function hideMsg(){msg.classList.remove("on")}
-function kill(){ if(hls){hls.destroy();hls=null} v.removeAttribute("src"); v.load&&0; }
+function kill(){ clearTimeout(wd); if(hls){hls.destroy();hls=null} v.onerror=null; v.removeAttribute("src"); }
 
-function load(url,my,onFail){
+// Daftar jalur percobaan: link utama lalu cadangan, tiap link lewat Worker, langsung, dan proxy publik
+function routes(c){
+  var r=[], us=[c.url].concat(c.fallback?[c.fallback]:[]), h=c.headers;
+  us.forEach(function(u){
+    var http=/^http:/.test(u);
+    if(PROXY) r.push({u:u,p:function(x){return PROXY+"/?url="+encodeURIComponent(x)+(h?"&ref="+encodeURIComponent(h.Referer):"")}});
+    if(!http&&!h) r.push({u:u});
+    PUB.forEach(function(P){ r.push({u:u,p:function(x){return P+encodeURIComponent(x)}}) });
+    if(!http&&h) r.push({u:u});
+  });
+  return r;
+}
+
+function load(rt,my,fail){
   kill();
+  var dead=false, rec=false;
+  var f=function(){ if(dead||my!==tok)return; dead=true; kill(); fail() };
+  wd=setTimeout(function(){ if(!played) f() },15000);
   if(window.Hls&&Hls.isSupported()){
-    hls=new Hls({lowLatencyMode:false,maxBufferLength:8,maxMaxBufferLength:20,backBufferLength:10,startFragPrefetch:true,capLevelToPlayerSize:true,manifestLoadingMaxRetry:1,levelLoadingMaxRetry:2,fragLoadingMaxRetry:3});
+    var cfg={lowLatencyMode:false,maxBufferLength:8,maxMaxBufferLength:20,backBufferLength:10,startFragPrefetch:true,capLevelToPlayerSize:true,manifestLoadingMaxRetry:0,manifestLoadingTimeOut:9000,levelLoadingMaxRetry:1,fragLoadingMaxRetry:2};
+    if(rt.p) cfg.xhrSetup=function(x,u){ x.open("GET",rt.p(u),true) };
+    hls=new Hls(cfg);
     hls.on(Hls.Events.MANIFEST_PARSED,function(){ if(my===tok) v.play().catch(function(){}) });
     hls.on(Hls.Events.ERROR,function(_,d){
       if(my!==tok||!d.fatal)return;
-      if(d.type===Hls.ErrorTypes.MEDIA_ERROR){hls.recoverMediaError();return}
-      onFail();
+      if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&!rec){rec=true;hls.recoverMediaError();return}
+      f();
     });
-    hls.loadSource(url); hls.attachMedia(v);
-  }else if(v.canPlayType("application/vnd.apple.mpegurl")){
-    v.src=url; v.play().catch(function(){});
-    v.onerror=function(){ if(my===tok) onFail() };
-  }else onFail();
+    hls.loadSource(rt.u); hls.attachMedia(v);
+  }else if(!rt.p&&v.canPlayType("application/vnd.apple.mpegurl")){
+    v.src=rt.u; v.play().catch(function(){});
+    v.onerror=f;
+  }else f();
 }
 function play(i){
   if(i<0)return;
-  cur=i; var c=CH[i], my=++tok;
+  cur=i; var c=CH[i], my=++tok; played=false;
   $("now").textContent=c.name;
   Array.prototype.forEach.call(list.children,function(el,k){el.classList.toggle("act",k===i);el.classList.remove("bad")});
   showMsg("Memuat "+c.name+"…");
   flash();
-  var fail=function(){
+  var rs=routes(c), k=0;
+  var next=function(){
     if(my!==tok)return;
-    list.children[i]&&list.children[i].classList.add("bad");
-    showMsg("Channel tidak bisa diputar sekarang",true);
+    if(k>=rs.length){
+      list.children[i]&&list.children[i].classList.add("bad");
+      showMsg("Channel tidak bisa diputar sekarang",true);
+      return;
+    }
+    if(k>0) showMsg("Mencoba jalur "+(k+1)+" dari "+rs.length+"…");
+    load(rs[k++],my,next);
   };
-  load(c.url,my,function(){
-    if(my!==tok)return;
-    if(c.fallback){ showMsg("Mencoba server cadangan…"); load(c.fallback,my,fail) } else fail();
-  });
+  next();
 }
-v.addEventListener("playing",function(){hideMsg()});
+v.addEventListener("playing",function(){played=true;clearTimeout(wd);hideMsg()});
 v.addEventListener("waiting",function(){ if(cur>=0) showMsg("Buffering…") });
 v.addEventListener("canplay",function(){hideMsg()});
 
-// HUD
 function flash(){hud.classList.add("on");clearTimeout(hudT);hudT=setTimeout(function(){hud.classList.remove("on")},2800)}
 
-// Fullscreen + rotasi
 function isFs(){return document.fullscreenElement||document.webkitFullscreenElement}
 function enter(){
   var p;
@@ -187,7 +209,6 @@ $("rot").onclick=function(e){
   screen.orientation.lock(land?"portrait":"landscape").catch(function(){});
 };
 
-// Double tap (sentuh) / double click (mouse)
 var lastTap=0;
 wrap.addEventListener("pointerup",function(e){
   if(e.target.closest&&e.target.closest("button"))return;
@@ -195,7 +216,6 @@ wrap.addEventListener("pointerup",function(e){
   if(now-lastTap<320){lastTap=0;toggleFs()}else{lastTap=now;flash()}
 });
 
-// Tambah channel
 $("addb").onclick=function(){$("add").classList.toggle("on")};
 $("as").onclick=function(){
   var n=$("an").value.trim(),u=$("au").value.trim();
