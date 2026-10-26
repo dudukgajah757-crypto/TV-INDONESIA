@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TV Indonesia</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<style>
+:root{--bg:#f2f3f5;--card:#fff;--text:#14161a;--muted:#6b7280;--accent:#e11d48;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0c10;--card:#171a21;--text:#f1f2f4;--muted:#9aa1ad;color-scheme:dark}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+#wrap{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:#000;aspect-ratio:16/9;width:100%;max-height:45vh;margin:0 auto;overflow:hidden;user-select:none}
+#wrap:fullscreen{max-height:none;aspect-ratio:auto;width:100%;height:100%}
+#wrap:-webkit-full-screen{max-height:none;aspect-ratio:auto;width:100%;height:100%}
+video{width:100%;height:100%;background:#000;object-fit:contain;display:block}
+#hud{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:8px 10px;color:#fff;background:linear-gradient(#0009,transparent 30%,transparent 70%,#0009);opacity:0;transition:opacity .25s;pointer-events:none}
+#hud.on{opacity:1}
+#hud button{pointer-events:auto}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#now{font-weight:600;font-size:15px}
+.btn{background:#ffffff26;color:#fff;border:0;border-radius:8px;padding:7px 11px;font-size:14px;cursor:pointer}
+#msg{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#fff;font-size:14px;text-align:center;padding:16px;pointer-events:none;background:#000a}
+#msg.on{display:flex}
+#msg button{pointer-events:auto;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px}
+.spin{width:28px;height:28px;border:3px solid #fff4;border-top-color:#fff;border-radius:50%;animation:r .8s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+#bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;gap:8px}
+#bar h1{font-size:15px;margin:0}
+#bar .btn{background:var(--card);color:var(--text);border:1px solid #8884}
+#add{display:none;padding:0 12px 8px;gap:6px;flex-wrap:wrap}
+#add.on{display:flex}
+#add input{flex:1 1 140px;padding:9px;border-radius:8px;border:1px solid #8886;background:var(--card);color:var(--text);font-size:14px}
+#list{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px;padding:0 12px 24px}
+.ch{background:var(--card);border:2px solid transparent;border-radius:12px;padding:10px 6px;text-align:center;cursor:pointer;color:var(--text);font-size:12.5px;line-height:1.25;word-break:break-word}
+.ch i{display:block;font-style:normal;font-size:22px;margin-bottom:4px}
+.ch.act{border-color:var(--accent)}
+.ch.bad{opacity:.45}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline webkit-playsinline autoplay></video>
+  <div id="msg"><div class="spin"></div><span id="mt">Memuat…</span></div>
+  <div id="hud">
+    <div class="row"><span id="now">Pilih channel</span><button class="btn" id="rot" hidden>Putar</button></div>
+    <div class="row"><span style="font-size:12px;opacity:.8">Ketuk 2x untuk layar penuh</span><button class="btn" id="fs">Layar penuh</button></div>
+  </div>
+</div>
+<div id="bar"><h1>TV Indonesia</h1><button class="btn" id="addb">+ Channel</button></div>
+<div id="add">
+  <input id="an" placeholder="Nama channel">
+  <input id="au" placeholder="Link .m3u8">
+  <button class="btn" id="as" style="background:var(--accent);color:#fff">Simpan</button>
+</div>
+<div id="list"></div>
+
+<script>
+// Isi BASE dengan alamat proxy milikmu untuk iNews, RCTI, MNCTV, GTV
+var BASE = "https://telvexa.mafiateknik.com";
+var DENS = { Referer: "https://www.dens.tv/", Origin: "https://www.dens.tv" };
+var CH = [
+ {name:"TVRI Nasional",emoji:"📺",url:"https://ott-balancer.tvri.go.id/live/eds/Nasional/hls/Nasional.m3u8",fallback:"https://op-flashcon-digdayahd-1.dens.tv/h/h17/index.m3u8"},
+ {name:"TVRI World",emoji:"🌐",url:"https://ott-balancer.tvri.go.id/live/eds/TVRIWorld/hls/TVRIWorld.m3u8"},
+ {name:"Metro TV",emoji:"📰",url:"https://edge.medcom.id/live-edge/smil:metro.smil/playlist.m3u8",fallback:"https://op-flashcon-digdayahd-1.dens.tv/h/h12/01.m3u8"},
+ {name:"Kompas TV",emoji:"📡",url:"https://op-flashcon-digdayahd-1.dens.tv/s/s104/index.m3u8",fallback:"https://op-flashcon-digdayahd-1.dens.tv/h/h234/01.m3u8",headers:DENS},
+ {name:"tvOne",emoji:"🔴",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h40/01.m3u8",fallback:"https://op-group1-swiftservehd-1.dens.tv/h/h40/index.m3u8",headers:DENS},
+ {name:"iNews",emoji:"📢",url:BASE+"/api/live/inews.m3u8",fallback:"https://live.i-news.tv/hls/stream.m3u8"},
+ {name:"CNBC Indonesia",emoji:"📈",url:"https://video.detik.com/livecnbc/smil:cnbctv/chunklist_w1279679883_b384000_sleng.m3u8",fallback:"https://live.cnbcindonesia.com/livecnbc/smil:cnbctv.smil/playlist.m3u8"},
+ {name:"CNN Indonesia",emoji:"🌍",url:"https://video.detik.com/livecnn/smil:cnntv/chunklist_w268557525_b384000_sleng.m3u8",fallback:"https://live.cnnindonesia.com/livecnn/smil:cnntv.smil/playlist.m3u8"},
+ {name:"BTV / BeritaSatu",emoji:"💼",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h314/stream.m3u8",headers:DENS},
+ {name:"Trans TV",emoji:"✨",url:"https://live.cnbcindonesia.com/transtv/smil:transtv.smil/playlist.m3u8",fallback:"https://video.detik.com/transtv/smil:transtv.smil/playlist.m3u8"},
+ {name:"Trans7",emoji:"🚀",url:"https://live.cnbcindonesia.com/trans7/smil:trans7.smil/playlist.m3u8",fallback:"https://video.detik.com/trans7/smil:trans7.smil/playlist.m3u8"},
+ {name:"RCTI",emoji:"💎",url:BASE+"/api/live/rcti.m3u8"},
+ {name:"MNCTV",emoji:"🌟",url:BASE+"/api/live/mnctv.m3u8"},
+ {name:"GTV",emoji:"⚡",url:BASE+"/api/live/gtv.m3u8"},
+ {name:"RTV",emoji:"🌈",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h10/01.m3u8",fallback:"https://rtvstream.rtv.co.id:4555/hls/rtv.m3u8",headers:DENS},
+ {name:"MDTV",emoji:"🎞️",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h223/02.m3u8",headers:DENS},
+ {name:"MOJI TV",emoji:"🏐",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h207/01.m3u8",fallback:"http://103.165.157.124:11054/hls/4/4.m3u8",headers:DENS},
+ {name:"Garuda TV",emoji:"🦅",url:"https://hgmtv.com:19360/garudatvlivestreaming/garudatvlivestreaming.m3u8"},
+ {name:"Nusantara TV",emoji:"🇮🇩",url:"https://nusantaratv.siar.us/nusantaratv/live/playlist.m3u8"},
+ {name:"DAAI TV",emoji:"🌱",url:"https://pull.daaiplus.com/live-DAAIPLUS/live-DAAIPLUS_HD.m3u8",fallback:"https://op-flashcon-digdayahd-1.dens.tv/h/h16/01.m3u8"},
+ {name:"RRI NET",emoji:"🎙️",url:"https://private-streaming.rri.go.id/memfs/6f77c7b5-feb2-4935-9f89-e7e9fca0a54a_output_0.m3u8",fallback:"https://public-streaming.rri.go.id/memfs/b3169f10-7846-496c-a186-698ea5ddd310.m3u8"},
+ {name:"MAGNA Channel",emoji:"💡",url:"https://edge.medcom.id/live-edge/smil:magna.smil/playlist.m3u8",fallback:"https://op-flashcon-digdayahd-1.dens.tv/h/h24/01.m3u8"},
+ {name:"UGTV",emoji:"🎓",url:"https://cdn.gunadarma.ac.id/streams/ugtv/ingestugtv.m3u8"},
+ {name:"Madu TV",emoji:"🌾",url:"https://re1.siar.us/madutv/hd720/playlist.m3u8"},
+ {name:"JTV Surabaya",emoji:"🎭",url:"http://122.248.43.242:1935/JTVSURABAYA/_definst_/myStream/playlist.m3u8"},
+ {name:"Celestial Movies",emoji:"🎬",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h14/index.m3u8",headers:DENS},
+ {name:"Rock Entertainment",emoji:"🎸",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h213/01.m3u8",headers:DENS},
+ {name:"tvN Movies",emoji:"🇰🇷",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h21/index.m3u8",headers:DENS},
+ {name:"Celestial Classic",emoji:"⚔️",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h22/index.m3u8",headers:DENS},
+ {name:"Thrill HD",emoji:"😱",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h23/index.m3u8",headers:DENS},
+ {name:"CinemaWorld",emoji:"🌍",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h29/index.m3u8",headers:DENS},
+ {name:"My Cinema Europe",emoji:"📽️",url:"https://op-flashcon-digdayahd-1.dens.tv/h/h18/index.m3u8",headers:DENS},
+ {name:"NEW KMOVIES",emoji:"🍿",url:"https://stream-us-east-1.getpublica.com/playlist.m3u8?network_id=7737"}
+];
+try{ var saved=JSON.parse(localStorage.getItem("tv_custom")||"[]"); CH=CH.concat(saved);}catch(e){}
+
+var $=function(i){return document.getElementById(i)};
+var v=$("v"), wrap=$("wrap"), hud=$("hud"), msg=$("msg"), mt=$("mt"), list=$("list");
+var hls=null, cur=-1, tok=0, hudT;
+
+function render(){
+  list.innerHTML="";
+  CH.forEach(function(c,i){
+    var b=document.createElement("button");
+    b.className="ch"+(i===cur?" act":"");
+    b.innerHTML="<i></i><span></span>";
+    b.firstChild.textContent=c.emoji||"📺";
+    b.lastChild.textContent=c.name;
+    b.onclick=function(){play(i)};
+    list.appendChild(b);
+  });
+}
+function showMsg(t,retry){
+  msg.classList.add("on");
+  msg.innerHTML=(retry?"":'<div class="spin"></div>')+"<span>"+t+"</span>"+(retry?'<button id="rt">Coba lagi</button>':"");
+  if(retry)$("rt").onclick=function(){play(cur)};
+}
+function hideMsg(){msg.classList.remove("on")}
+function kill(){ if(hls){hls.destroy();hls=null} v.removeAttribute("src"); v.load&&0; }
+
+function load(url,my,onFail){
+  kill();
+  if(window.Hls&&Hls.isSupported()){
+    hls=new Hls({lowLatencyMode:false,maxBufferLength:8,maxMaxBufferLength:20,backBufferLength:10,startFragPrefetch:true,capLevelToPlayerSize:true,manifestLoadingMaxRetry:1,levelLoadingMaxRetry:2,fragLoadingMaxRetry:3});
+    hls.on(Hls.Events.MANIFEST_PARSED,function(){ if(my===tok) v.play().catch(function(){}) });
+    hls.on(Hls.Events.ERROR,function(_,d){
+      if(my!==tok||!d.fatal)return;
+      if(d.type===Hls.ErrorTypes.MEDIA_ERROR){hls.recoverMediaError();return}
+      onFail();
+    });
+    hls.loadSource(url); hls.attachMedia(v);
+  }else if(v.canPlayType("application/vnd.apple.mpegurl")){
+    v.src=url; v.play().catch(function(){});
+    v.onerror=function(){ if(my===tok) onFail() };
+  }else onFail();
+}
+function play(i){
+  if(i<0)return;
+  cur=i; var c=CH[i], my=++tok;
+  $("now").textContent=c.name;
+  Array.prototype.forEach.call(list.children,function(el,k){el.classList.toggle("act",k===i);el.classList.remove("bad")});
+  showMsg("Memuat "+c.name+"…");
+  flash();
+  var fail=function(){
+    if(my!==tok)return;
+    list.children[i]&&list.children[i].classList.add("bad");
+    showMsg("Channel tidak bisa diputar sekarang",true);
+  };
+  load(c.url,my,function(){
+    if(my!==tok)return;
+    if(c.fallback){ showMsg("Mencoba server cadangan…"); load(c.fallback,my,fail) } else fail();
+  });
+}
+v.addEventListener("playing",function(){hideMsg()});
+v.addEventListener("waiting",function(){ if(cur>=0) showMsg("Buffering…") });
+v.addEventListener("canplay",function(){hideMsg()});
+
+// HUD
+function flash(){hud.classList.add("on");clearTimeout(hudT);hudT=setTimeout(function(){hud.classList.remove("on")},2800)}
+
+// Fullscreen + rotasi
+function isFs(){return document.fullscreenElement||document.webkitFullscreenElement}
+function enter(){
+  var p;
+  if(wrap.requestFullscreen) p=wrap.requestFullscreen();
+  else if(wrap.webkitRequestFullscreen) p=wrap.webkitRequestFullscreen();
+  else if(v.webkitEnterFullscreen){ v.webkitEnterFullscreen(); return }
+  Promise.resolve(p).then(function(){
+    if(screen.orientation&&screen.orientation.lock){ screen.orientation.lock("any").catch(function(){ return screen.orientation.lock("landscape") }).catch(function(){}) }
+  }).catch(function(){});
+}
+function leave(){
+  if(screen.orientation&&screen.orientation.unlock){try{screen.orientation.unlock()}catch(e){}}
+  (document.exitFullscreen||document.webkitExitFullscreen).call(document);
+}
+function toggleFs(){ isFs()?leave():enter() }
+function onFsChange(){ $("rot").hidden=!isFs(); $("fs").textContent=isFs()?"Keluar":"Layar penuh"; if(!isFs()&&screen.orientation&&screen.orientation.unlock){try{screen.orientation.unlock()}catch(e){}} flash() }
+document.addEventListener("fullscreenchange",onFsChange);
+document.addEventListener("webkitfullscreenchange",onFsChange);
+$("fs").onclick=function(e){e.stopPropagation();toggleFs()};
+$("rot").onclick=function(e){
+  e.stopPropagation();
+  if(!(screen.orientation&&screen.orientation.lock))return;
+  var land=screen.orientation.type.indexOf("landscape")===0;
+  screen.orientation.lock(land?"portrait":"landscape").catch(function(){});
+};
+
+// Double tap (sentuh) / double click (mouse)
+var lastTap=0;
+wrap.addEventListener("pointerup",function(e){
+  if(e.target.closest&&e.target.closest("button"))return;
+  var now=Date.now();
+  if(now-lastTap<320){lastTap=0;toggleFs()}else{lastTap=now;flash()}
+});
+
+// Tambah channel
+$("addb").onclick=function(){$("add").classList.toggle("on")};
+$("as").onclick=function(){
+  var n=$("an").value.trim(),u=$("au").value.trim();
+  if(!n||!/^https?:\/\//.test(u))return;
+  var c={name:n,emoji:"➕",url:u};
+  CH.push(c);
+  try{var s=JSON.parse(localStorage.getItem("tv_custom")||"[]");s.push(c);localStorage.setItem("tv_custom",JSON.stringify(s))}catch(e){}
+  $("an").value="";$("au").value="";$("add").classList.remove("on");
+  render(); play(CH.length-1);
+};
+
+render();
+</script>
+</body>
+</html>
